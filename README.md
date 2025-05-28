@@ -7,13 +7,13 @@ A CLI tool that starts a caching proxy server, it will forward requests to the a
 Added Features:
 1. Statistics Endpoint (/_proxy_stats):
 
-  - Uptime monitoring
+    - Uptime monitoring
 
-  - Request counts
+    - Request counts
 
-  - Cache hit rate
+    - Cache hit rate
 
-  - Memory usage
+    - Memory usage
 
 2. Improved Error Handling:
 
@@ -25,27 +25,27 @@ Added Features:
 
 3. Enhanced Caching:
 
-  - More sophisticated cache key generation
+    - More sophisticated cache key generation
 
-  - Only cache successful responses (2xx)
+    - Only cache successful responses (2xx)
 
-  - Better buffer handling
+    - Better buffer handling
 
 4. Security Improvements:
 
-  - URL validation
+    - URL validation
 
-  - Rate limiting infrastructure (ready to implement)
+    - Rate limiting infrastructure (ready to implement)
 
-  - Request timeout handling
+    - Request timeout handling
 
 5. Observability:
 
-  - Detailed logging
- 
-  - Performance metrics
+    - Detailed logging
+  
+    - Performance metrics
 
-  - Debug information
+    - Debug information
 
 6. Resource Management:
 
@@ -90,7 +90,7 @@ All of the dependencies required are listed in the package.json file. Use `npm i
 
 > However, you will need to install node and postgreSQL globally on your local machine
 
-The caching proxy server should start on port 3000 and forward requests to ```http://localhost:3000``
+The caching proxy server should start on port 3000 and forward requests to ```http://localhost:3000```
 
 Taking the above example, if the user makes a request to ```http://localhost:3000```, the caching proxy server will forward the request to http://localhost:3000, return the response along with headers and cache the response. Also, add the headers to the response that indicate whether the response is from the cache or the server.
 
