@@ -62,8 +62,27 @@ Added Features:
 
 ## Project setup
 
+The following steps outline will set you up on how to install the app on your local machine.
+
+1. 
 ```bash
+# Clone this repository 
+git clone https://github.com/salimkarbm/caching-proxy.git
+```
+2. 
+```bash
+# From the terminal, change directory to caching-proxy folder 
+$ cd caching-proxy
+```
+3. 
+```bash
+# Run This will install the necessary packages and dependencies based on the supplied package.json.
 $ npm install
+```
+4. 
+```bash
+# Then run the app with the command 
+$ nest start
 ```
 
 ## Compile and run the project
