@@ -116,8 +116,8 @@ Contributions are currently not allowed ❌ but please feel free to submit issue
 
 ## Stay in touch
 
-- Github - [@salimkarbm](https://github.com/salimkarbm)\
-- LinkedIn - [Salim Imuzai](https://www.linkedin.com/in/salim-karbm/)\
+- Github - [@salimkarbm](https://github.com/salimkarbm)
+- LinkedIn - [Salim Imuzai](https://www.linkedin.com/in/salim-karbm/)
 - Twitter - [@salimkarbm](https://twitter.com/salimkarbm)
 
 
