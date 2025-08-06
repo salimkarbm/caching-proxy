@@ -3,7 +3,7 @@ import * as http from 'http';
 import * as httpProxy from 'http-proxy';
 import * as NodeCache from 'node-cache';
 import * as net from 'net';
-import { Observable, fromEvent, firstValueFrom } from 'rxjs';
+import { Observable, fromEvent, filter, firstValueFrom } from 'rxjs';
 
 interface CacheEntry {
   headers: http.IncomingHttpHeaders;
@@ -153,16 +153,16 @@ export class ProxyService implements OnModuleDestroy {
       [http.IncomingMessage, http.IncomingMessage, http.ServerResponse]
     >;
 
-    const [proxyRes, ,] = await firstValueFrom(
-      proxyRes$.pipe(filter(([_, req]) => req.url === req.url)),
-    );
+    const [proxyRes] = (await firstValueFrom(
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      proxyRes$.pipe(filter(([_, request]) => request.url === req.url)),
+    )) as [http.IncomingMessage, http.IncomingMessage, http.ServerResponse];
 
     const chunks: Buffer[] = [];
     proxyRes.on('data', (chunk) => chunks.push(chunk));
 
     await new Promise<void>((resolve) => {
       proxyRes.on('end', () => {
-        // Only cache successful responses
         if (
           proxyRes.statusCode &&
           proxyRes.statusCode >= 200 &&
@@ -240,7 +240,7 @@ export class ProxyService implements OnModuleDestroy {
   }
 
   private async isRateLimited(req: http.IncomingMessage): Promise<boolean> {
-    // Implement your rate limiting logic here
+    // Implement rate limiting logic here
     // Could use Redis or other storage for distributed rate limiting
     await this.cacheResponse(req, this.getCacheKey(req));
     return false;

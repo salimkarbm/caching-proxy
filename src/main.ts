@@ -6,14 +6,6 @@ import { CliService } from './cli.service';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  //const program = new Command();
-  // program
-  //   .requiredOption('--port <number>', 'Port to run the proxy server on')
-  //   .requiredOption('--origin <url>', 'Origin server URL to proxy to');
-
-  // program.parse(process.argv);
-
-  // const { port, origin } = program.opts();
   const args = process.argv;
 
   const cliService = app.get(CliService);

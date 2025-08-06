@@ -107,7 +107,7 @@ $ nest start caching-proxy --port 3128 --origin http://localhost:3000
 
 All of the dependencies required are listed in the package.json file. Use `npm install` on the command line.
 
-> However, you will need to install node and postgreSQL globally on your local machine
+> However, you will need to install node and NestJs globally on your local machine
 
 The caching proxy server should start on port 3000 and forward requests to http://localhost:3000
 
@@ -136,7 +136,7 @@ Contributions are currently not allowed ❌ but please feel free to submit issue
 ## Stay in touch
 
 - Github - [@salimkarbm](https://github.com/salimkarbm)
-- LinkedIn - [Salim Imuzai](https://www.linkedin.com/in/salim-karbm/)
+- LinkedIn - [Salim Imuzai](https://www.linkedin.com/in/salim-karbm)
 - Twitter - [@salimkarbm](https://twitter.com/salimkarbm)
 
 
