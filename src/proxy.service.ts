@@ -3,7 +3,7 @@ import * as http from 'http';
 import * as httpProxy from 'http-proxy';
 import * as NodeCache from 'node-cache';
 import * as net from 'net';
-import { Observable, fromEvent, filter, firstValueFrom } from 'rxjs';
+//import { Observable, fromEvent, filter, firstValueFrom } from 'rxjs';
 
 interface CacheEntry {
   headers: http.IncomingHttpHeaders;
@@ -18,17 +18,23 @@ export class ProxyService implements OnModuleDestroy {
   private server: http.Server;
   private requestCount = 0;
   private cacheHits = 0;
+  private originBaseUrl: string;
+
+  // Tunables
+  private readonly TIMEOUT_MS = 8000;
+  private readonly MAX_CACHE_SIZE = 5 * 1024 * 1024; // 5 MB
+  private readonly CACHE_TTL = 60; // seconds
 
   constructor() {
     this.proxy = httpProxy.createProxyServer({
-      xfwd: true, // Add x-forwarded headers
-      secure: false, // For demo purposes only
+      xfwd: true,
+      secure: false,
     });
 
     this.cache = new NodeCache({
-      stdTTL: 60, // Default cache TTL (60 seconds)
-      checkperiod: 120, // Automatic cache pruning
-      useClones: false, // Better performance for buffers
+      stdTTL: this.CACHE_TTL,
+      checkperiod: 120,
+      useClones: false,
     });
 
     this.setupProxyEvents();
@@ -39,12 +45,22 @@ export class ProxyService implements OnModuleDestroy {
     this.proxy.close();
   }
 
-  createProxyServer(port: number, options?: { enableStatsEndpoint?: boolean }) {
+  createProxyServer(
+    port: number,
+    origin: string,
+    options?: { enableStatsEndpoint?: boolean },
+  ) {
+    this.originBaseUrl = origin.replace(/\/$/, '');
     this.server = http.createServer((req, res) => {
       this.requestCount++;
-      // Handle stats endpoint
+      // Stats endpoint (always returns immediately)
       if (options?.enableStatsEndpoint && req.url === '/_proxy_stats') {
         this.handleStatsRequest(res);
+        return;
+      }
+
+      if (req.url?.startsWith('/_proxy_purge')) {
+        this.handlePurgeRequest(req, res);
         return;
       }
       this.handleRequest(req, res);
@@ -52,23 +68,40 @@ export class ProxyService implements OnModuleDestroy {
 
     this.server.listen(port, () => {
       this.logger.log(`Proxy server running at http://localhost:${port}`);
+      this.logger.log(`Forwarding to origin: ${this.originBaseUrl}`);
     });
+
     return this.server;
   }
 
-  private handleStatsRequest(res: http.ServerResponse) {
-    const stats = {
-      uptime: process.uptime(),
-      requests: this.requestCount,
-      cacheHits: this.cacheHits,
-      cacheHitRate:
-        ((this.cacheHits / this.requestCount) * 100).toFixed(2) + '%',
-      cacheSize: this.cache.keys().length,
-      memoryUsage: process.memoryUsage(),
-    };
+  clearCache(): number {
+    const count = this.cache.keys().length;
+    this.cache.flushAll();
+    this.logger.log(`Cleared all ${count} cache entries`);
+    return count;
+  }
 
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(stats, null, 2));
+  private handlePurgeRequest(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ) {
+    const url = new URL(req.url || '', `http://${req.headers.host}`);
+    const cacheKey = url.searchParams.get('key');
+
+    if (!cacheKey) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Missing cache key parameter ?key=' }));
+      return;
+    }
+
+    if (this.cache.del(cacheKey)) {
+      this.logger.log(`Purged cache for key: ${cacheKey}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ message: `Cache entry deleted: ${cacheKey}` }));
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Cache entry not found: ${cacheKey}` }));
+    }
   }
 
   private async handleRequest(
@@ -76,111 +109,123 @@ export class ProxyService implements OnModuleDestroy {
     res: http.ServerResponse,
   ) {
     try {
-      // Validate URL
-      if (!this.isValidUrl(req.url)) {
-        res.writeHead(400);
-        res.end('Invalid URL');
-        return;
-      }
+      res.setHeader('Connection', 'close'); // so curl doesn't hang
 
-      // Check cache
       const cacheKey = this.getCacheKey(req);
-      const cachedResponse = this.cache.get(cacheKey) as CacheEntry;
+      const cachedResponse = this.cache.get(cacheKey) as CacheEntry | undefined;
 
       if (cachedResponse) {
         this.cacheHits++;
         this.logger.debug(`Cache hit for ${cacheKey}`);
-        res.writeHead(200, cachedResponse.headers);
+        res.writeHead(cachedResponse.statusCode || 200, {
+          ...cachedResponse.headers,
+          'X-Cache': 'HIT',
+        });
         res.end(cachedResponse.body);
         return;
       }
 
       this.logger.debug(`Cache miss for ${cacheKey}`);
+      res.setHeader('X-Cache', 'MISS');
 
-      // Rate limiting check
-      if (await this.isRateLimited(req)) {
-        res.writeHead(429);
+      if (this.isRateLimited(req)) {
+        res.writeHead(429, { 'Content-Type': 'text/plain' });
         res.end('Too Many Requests');
         return;
       }
 
-      // Process request
-      await this.proxyRequest(req, res, cacheKey);
+      // Forward request and cache response
+      await this.proxyRequestAndCache(req, res, cacheKey);
     } catch (err) {
       this.logger.error('Request handling error', err);
-      res.writeHead(500);
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+      }
       res.end('Internal Server Error');
     }
   }
 
-  private async proxyRequest(
+  private handleStatsRequest(res: http.ServerResponse) {
+    const stats = {
+      uptime: process.uptime() + ' seconds',
+      requests: this.requestCount,
+      cacheHits: this.cacheHits,
+      cacheMisses: this.requestCount - this.cacheHits,
+      cacheHitRate:
+        this.requestCount > 0
+          ? ((this.cacheHits / this.requestCount) * 100).toFixed(2) + '%'
+          : '0%',
+      cacheSize: this.cache.keys().length,
+      memoryUsage: {
+        rss: (process.memoryUsage().rss / 1024 / 1024).toFixed(2) + ' MB',
+        heapUsed:
+          (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + ' MB',
+      },
+      cachedKeys: this.cache.keys(), // so you can see what’s stored
+    };
+
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      Connection: 'close',
+    });
+    res.end(JSON.stringify(stats, null, 2));
+  }
+
+  private async proxyRequestAndCache(
     req: http.IncomingMessage,
     res: http.ServerResponse,
     cacheKey: string,
   ) {
     return new Promise<void>((resolve) => {
-      // Set timeout
-      req.socket.setTimeout(10000); // 10 seconds timeout
-
-      // Proxy the request
+      req.socket.setTimeout(10000);
+      this.proxy.once('proxyRes', (proxyRes) => {
+        const chunks: Buffer[] = [];
+        proxyRes.on('data', (chunk) => {
+          chunks.push(chunk);
+          res.write(chunk); // stream chunk to client
+        });
+        proxyRes.on('end', () => {
+          res.end(); // finish client response
+          if (
+            proxyRes.statusCode &&
+            proxyRes.statusCode >= 200 &&
+            proxyRes.statusCode < 300
+          ) {
+            const body = Buffer.concat(chunks);
+            this.cache.set(cacheKey, {
+              headers: proxyRes.headers,
+              body,
+              statusCode: proxyRes.statusCode,
+            });
+            this.logger.debug(`Cached response for ${cacheKey}`);
+          }
+          resolve();
+        });
+        // Copy headers from origin
+        Object.entries(proxyRes.headers).forEach(([key, value]) => {
+          if (value !== undefined) res.setHeader(key, value as string);
+        });
+        res.writeHead(proxyRes.statusCode || 200);
+      });
       this.proxy.web(
         req,
         res,
         {
-          target: req.url,
+          target: this.originBaseUrl,
           changeOrigin: true,
-          timeout: 8000, // 8 seconds proxy timeout
+          selfHandleResponse: true, // intercept to stream & cache
         },
         (err) => {
           this.logger.error(`Proxy error for ${req.url}: ${err.message}`);
-          res.writeHead(502);
+          if (!res.headersSent) {
+            res.writeHead(502, { 'Content-Type': 'text/plain' });
+          }
           res.end('Bad Gateway');
           resolve();
         },
       );
-
-      // Cache response
-      this.cacheResponse(req, cacheKey)
-        .catch((err) => {
-          this.logger.error('Caching error', err);
-        })
-        .finally(() => resolve());
     });
   }
-
-  private async cacheResponse(req: http.IncomingMessage, cacheKey: string) {
-    const proxyRes$ = fromEvent(this.proxy, 'proxyRes') as Observable<
-      [http.IncomingMessage, http.IncomingMessage, http.ServerResponse]
-    >;
-
-    const [proxyRes] = (await firstValueFrom(
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      proxyRes$.pipe(filter(([_, request]) => request.url === req.url)),
-    )) as [http.IncomingMessage, http.IncomingMessage, http.ServerResponse];
-
-    const chunks: Buffer[] = [];
-    proxyRes.on('data', (chunk) => chunks.push(chunk));
-
-    await new Promise<void>((resolve) => {
-      proxyRes.on('end', () => {
-        if (
-          proxyRes.statusCode &&
-          proxyRes.statusCode >= 200 &&
-          proxyRes.statusCode < 300
-        ) {
-          const body = Buffer.concat(chunks);
-          this.cache.set(cacheKey, {
-            headers: proxyRes.headers,
-            body: body,
-            statusCode: proxyRes.statusCode,
-          });
-          this.logger.debug(`Cached response for ${cacheKey}`);
-        }
-        resolve();
-      });
-    });
-  }
-
   private setupProxyEvents() {
     this.proxy.on(
       'error',
@@ -190,107 +235,30 @@ export class ProxyService implements OnModuleDestroy {
         res: http.ServerResponse | net.Socket,
       ) => {
         this.logger.error(`Proxy Error: ${err.message}`);
-
-        // Type guard for ServerResponse
         if ('headersSent' in res) {
           if (!res.headersSent) {
-            res.writeHead(500);
+            (res as http.ServerResponse).writeHead(500);
           }
-          res.end('Proxy Error');
+          (res as http.ServerResponse).end('Proxy Error');
         } else {
-          // Handle Socket case (WebSocket connections)
-          this.logger.debug('WebSocket connection error');
-          res.destroy();
+          try {
+            (res as net.Socket).destroy();
+          } catch (e) {
+            // ignore
+            this.logger.debug('WebSocket connection error', e);
+          }
         }
       },
     );
-
-    this.proxy.on(
-      'econnreset',
-      (
-        err: Error,
-        req: http.IncomingMessage,
-        res: http.ServerResponse | net.Socket,
-      ) => {
-        this.logger.error(`Connection Reset: ${err.message}`);
-        if ('headersSent' in res) {
-          if (!res.headersSent) {
-            res.writeHead(502, { Connection: 'close' });
-          }
-          res.end('Connection Reset');
-        } else {
-          res.destroy();
-        }
-      },
-    );
-  }
-
-  private isValidUrl(url?: string): boolean {
-    if (!url) return false;
-    try {
-      new URL(url);
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   private getCacheKey(req: http.IncomingMessage): string {
     return `${req.method}:${req.url}:${req.headers['accept'] || ''}`;
   }
 
-  private async isRateLimited(req: http.IncomingMessage): Promise<boolean> {
-    // Implement rate limiting logic here
-    // Could use Redis or other storage for distributed rate limiting
-    await this.cacheResponse(req, this.getCacheKey(req));
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private isRateLimited(_req: http.IncomingMessage): boolean {
+    // Add rate limiting logic (Redis, token bucket, etc.)
     return false;
   }
-
-  //   private readonly proxy = httpProxy.createProxyServer({});
-  //   private readonly cache = new NodeCache({ stdTTL: 60 }); // Cache for 60 seconds
-  //   private readonly logger = new Logger(ProxyService.name);
-
-  //   createProxyServer(port: number) {
-  //     const server = http.createServer((req, res) => {
-  //       this.handleRequest(req, res);
-  //     });
-  //     server.listen(port, () => {
-  //       this.logger.log(`
-
-  //         Proxy server running at http://localhost:${port}
-  //         `);
-  //     });
-  //     return server;
-  //   }
-  //   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
-  //     const cacheKey: string = req.url as string;
-  //     const cachedResponse = this.cache.get(cacheKey) as {
-  //       headers: http.IncomingHttpHeaders;
-  //       body: Buffer;
-  //     };
-  //     if (cachedResponse) {
-  //       this.logger.log(`Cache hit for ${cacheKey}`);
-  //       res.writeHead(200, cachedResponse.headers);
-  //       res.end(cachedResponse.body);
-  //       return;
-  //     }
-  //     this.logger.log(`Cache miss for ${cacheKey}, fetching...`);
-  //     this.proxy.web(req, res, { target: req.url, changeOrigin: true }, (err) => {
-  //       this.logger.error('Proxy error', err);
-  //       res.writeHead(502);
-  //       res.end('Bad Gateway');
-  //     });
-  //     // Cache response data
-  //     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  //     this.proxy.once('proxyRes', (proxyRes, req) => {
-  //       let body = Buffer.from('');
-  //       proxyRes.on('data', (chunk) => (body = Buffer.concat([body, chunk])));
-  //       proxyRes.on('end', () => {
-  //         this.cache.set(cacheKey, {
-  //           headers: proxyRes.headers,
-  //           body: body,
-  //         });
-  //       });
-  //     });
-  //   }
 }

@@ -7,13 +7,17 @@ export class CliService {
 
   setArgs(args: string[]) {
     this.args = args;
-    this.logger.debug(`CLI arguments: ${args.join(' ')}`);
+    //this.logger.debug(`CLI arguments: ${args.join(' ')}`);
   }
 
   getArg(name: string): string | undefined {
     const prefix = `--${name}=`;
     const arg = this.args.find((a) => a.startsWith(prefix));
-    return arg ? arg.slice(prefix.length) : undefined;
+    const value = arg ? arg.slice(prefix.length) : undefined;
+    if (!value) {
+      this.logger.warn(`Missing argument: ${name}`);
+    }
+    return value;
   }
 
   hasFlag(name: string): boolean {

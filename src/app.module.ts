@@ -11,10 +11,15 @@ import { CliService } from './cli.service';
   exports: [ProxyService, CliService],
 })
 export class AppModule implements OnModuleInit {
+  constructor(
+    private readonly proxyService: ProxyService,
+    private readonly cliService: CliService,
+  ) {}
   private readonly logger = new Logger(AppModule.name);
   onModuleInit() {
-    // Log a message when the server has started
-    const port = process.env.PORT || 3000;
+    const PORT = process.env.PORT || 3000;
+    const originPort = this.cliService.getArg('origin') as string;
+    const port = originPort?.split(':').pop() || PORT;
 
     this.logger.log(`
 

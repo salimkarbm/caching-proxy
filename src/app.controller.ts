@@ -4,9 +4,18 @@ import { AppService } from './app.service';
 @Controller()
 export class AppController {
   constructor(private readonly appService: AppService) {}
+  @Get('/api/cache')
+  getCache() {
+    return;
+  }
 
-  @Get()
-  getHello(): string {
-    return this.appService.getHello();
+  @Get('/_proxy_stats')
+  getStats() {
+    return;
+  }
+
+  @Get('/_proxy_purge/*key')
+  purgeCache() {
+    return;
   }
 }

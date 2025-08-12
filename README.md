@@ -79,11 +79,6 @@ $ cd caching-proxy
 # Run This will install the necessary packages and dependencies based on the supplied package.json.
 $ npm install
 ```
-4. 
-```bash
-# Then run the app with the command 
-$ nest start
-```
 
 ## Compile and run the project
 
@@ -100,16 +95,57 @@ $ nest start -- caching-proxy --port=3128 --origin=http://localhost:4000
 - --port is the port on which the caching proxy server will run.
 - --origin is the URL of the server to which the requests will be forwarded.
 
+
+## How to run & test
+
 ```bash
-#For example, if the user runs the following command:
-$ nest start caching-proxy --port 3128 --origin http://localhost:3000
+#For example, if the user runs the following command to start the server:
+$ nest start caching-proxy --port=3128 --origin=http://localhost:3000
 ```
+
+```bash
+# open another terminal to Check stats before any request:
+$ curl -s http://localhost:5000/_proxy_stats | jq
+```
+
+```bash
+# run the command output X-Cache: MISS:
+$ curl -i http://localhost:3128/api/cache
+```
+
+
+```bash
+# run the command again output X-Cache: HIT:
+$ curl -i http://localhost:3128/api/cache
+```
+
+```bash
+# Check stats again:
+$ curl -s http://localhost:5000/_proxy_stats | jq
+```
+
+## How to purge endpoint
+```bash
+# When a request is cached, you’ll see something like:
+$ Cached response for GET:/api/posts:*/*
+```
+
+```bash
+# Purge the cache:
+$ curl http://localhost:5000/_proxy_purge?key=GET:/api/posts:*/*
+```
+Re-test
+
+    First request after purge → X-Cache: MISS
+
+    Next request → X-Cache: HIT
+
 
 All of the dependencies required are listed in the package.json file. Use `npm install` on the command line.
 
 > However, you will need to install node and NestJs globally on your local machine
 
-The caching proxy server should start on port 3000 and forward requests to http://localhost:3000
+The caching proxy server should start on port 3128 and forward requests to http://localhost:3000
 
 Taking the above example, if the user makes a request to http://localhost:3000, the caching proxy server will forward the request to http://localhost:3000, return the response along with headers and cache the response. Also, add the headers to the response that indicate whether the response is from the cache or the server.
 
